@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>PTU Fees Collection Form</title>
+
+  <style>
+    body { font-family: Arial, sans-serif; background: linear-gradient(135deg,#1e3c72,#2a5298);
+           display:flex; align-items:center; justify-content:center; height:100vh; margin:0;}
+    .card { background:#fff; width:760px; padding:28px; border-radius:18px;
+            box-shadow:0 8px 30px rgba(0,0,0,0.25); }
+    h2 { color:#1e3c72; text-align:center; }
+    .row { display:flex; gap:12px; margin:8px 0; align-items:center; }
+    .row label { width:220px; font-weight:700; color:#333; }
+    .row input, .row select { flex:1; padding:8px 10px; border-radius:8px; border:1px solid #ccc; }
+    .btns { display:flex; gap:8px; flex-wrap:wrap; justify-content:center; margin-top:18px; }
+    button { padding:10px 14px; border-radius:12px; border:none; cursor:pointer; background:#2a5298; color:#fff; }
+    button.secondary { background:#ff4d4f; }
+    button.ghost { background:#e6e6e6; color:#333; }
+    input[readonly] { background:#f5f5f5; }
+  </style>
+</head>
+
+<body>
+  <div class="card">
+    <h2>🔥 PTU FEES COLLECTION MANAGEMENT</h2>
+
+    <div class="row">
+      <label>Fee ID (Auto)</label>
+      <input type="number" id="fee_id" readonly>
+    </div>
+
+    <div class="row">
+      <label>Student ID *</label>
+      <input type="number" id="student_id" required>
+    </div>
+
+    <div class="row">
+      <label>Student Name *</label>
+      <input type="text" id="student_name" required>
+    </div>
+
+    <div class="row">
+      <label>Department *</label>
+      <select id="department">
+        <option value="CSE">CSE</option>
+        <option value="ECE">ECE</option>
+        <option value="EEE">EEE</option>
+        <option value="IT">IT</option>
+        <option value="MECH">MECH</option>
+        <option value="CIVIL">CIVIL</option>
+        <option value="MECHTRONICS">MECHTRONICS</option>
+        <option value="EIE">EIE</option>
+      </select>
+    </div>
+
+    <div class="row">
+      <label>Seat Type *</label>
+      <select id="seat_type">
+        <option value="PUDUCHERRY">PUDUCHERRY</option>     
+        <option value="JOSAA">JOSAA</option>
+      </select>
+    </div>
+
+    <div class="row">
+      <label>Total Amount *</label>
+      <input type="number" id="total_amount">
+    </div>
+
+    <div class="row">
+      <label>Paid Amount *</label>
+      <input type="number" id="paid_amount">
+    </div>
+
+    <div class="row">
+      <label>Balance Amount</label>
+      <input type="number" id="balance_amount" readonly>
+    </div>
+
+    <div class="row">
+      <label>Payment Status *</label>  
+      <select id="check_id">
+        <option value="PAID">PAID</option>
+        <option value="PARTIAL">PARTIAL</option>
+        <option value="PENDING">PENDING</option>
+      </select>
+    </div>
+
+    <div class="row">
+      <label>Due Date *</label>
+      <input type="date" id="due_date">
+    </div>
+
+    <div class="row">
+      <label>Payment Date</label>
+      <input type="date" id="payment_date">
+    </div>
+
+    <div class="btns">
+      <button id="btn_new">New</button>
+      <button id="btn_insert">Insert</button>
+      <button id="btn_save">Save</button>
+      <button id="btn_prev">Previous</button>
+      <button id="btn_next">Next</button>
+      <button id="btn_delete" class="secondary">Delete</button>
+      <button id="btn_commit" class="ghost">Commit</button>
+      <button onclick="location.href='/logout'" class="ghost">Logout</button>
+    </div>
+  </div>
+
+<script>
+
+// ---------------- COMPUTE BALANCE ----------------
+function computeBalance() {
+  const tot = Number(document.getElementById("total_amount").value || 0);
+  const paid = Number(document.getElementById("paid_amount").value || 0);
+  document.getElementById("balance_amount").value = tot - paid;
+}
+
+document.getElementById("total_amount").addEventListener("input", computeBalance);
+document.getElementById("paid_amount").addEventListener("input", computeBalance);
+
+
+// ---------------- Generate New Fee ID ----------------
+async function generateID() {
+  const r = await fetch("/generate_fee_id");
+  const d = await r.json();
+  document.getElementById("fee_id").value = d.fee_id;
+}
+
+// ---------------- Form Data ----------------
+function formData() {
+  return {
+    fee_id: document.getElementById("fee_id").value,
+    student_id: document.getElementById("student_id").value,
+    student_name: document.getElementById("student_name").value,
+    department: document.getElementById("department").value,
+    seat_type: document.getElementById("seat_type").value,
+    total_amount: document.getElementById("total_amount").value,
+    paid_amount: document.getElementById("paid_amount").value,
+    balance_amount: document.getElementById("balance_amount").value,
+    check_id: document.getElementById("check_id").value,
+    due_date: document.getElementById("due_date").value,
+    payment_date: document.getElementById("payment_date").value
+  };
+}
+
+
+// ---------------- Insert ----------------
+document.getElementById("btn_insert").onclick = async () => {
+  const res = await fetch("/save_to_buffer", {
+    method:"POST", headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(formData())
+  });
+  alert((await res.json()).message);
+};
+
+
+// ---------------- Save ----------------
+document.getElementById("btn_save").onclick = async () => {
+  const res = await fetch("/save_to_buffer", {
+    method:"POST", headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(formData())
+  });
+  alert((await res.json()).message);
+};
+
+// ---------------- Move Previous / Next ----------------
+async function move(dir) {
+  const curr = document.getElementById("fee_id").value;
+  const r = await fetch(`/${dir}?current_id=${curr}`);
+  const d = await r.json();
+  if (!d.record) return alert("No record");
+
+  const x = d.record;
+  document.getElementById("fee_id").value = x.fee_id;
+  document.getElementById("student_id").value = x.student_id;
+  document.getElementById("student_name").value = x.student_name;
+  document.getElementById("department").value = x.department;
+  document.getElementById("seat_type").value = x.seat_type;
+  document.getElementById("total_amount").value = x.total_amount;
+  document.getElementById("paid_amount").value = x.paid_amount;
+  document.getElementById("balance_amount").value = x.balance_amount;
+  document.getElementById("check_id").value = x.check_id;
+  document.getElementById("due_date").value = x.due_date;
+  document.getElementById("payment_date").value = x.payment_date;
+}
+
+document.getElementById("btn_prev").onclick = () => move("get_previous_record");
+document.getElementById("btn_next").onclick = () => move("get_next_record");
+
+
+// ---------------- Delete ----------------
+document.getElementById("btn_delete").onclick = async () => {
+  const id = document.getElementById("fee_id").value;
+  if (!confirm(`Delete Fee ID ${id}?`)) return;
+
+  const r = await fetch("/delete_from_database", {
+    method:"DELETE",
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({fee_id:id})
+  });
+  alert((await r.json()).message);
+};
+
+
+// ---------------- Commit All ----------------
+document.getElementById("btn_commit").onclick = async () => {
+  if (!confirm("Commit all records to main table?")) return;
+  const r = await fetch("/commit_all", {method:"POST"});
+  alert((await r.json()).message);
+};
+
+
+// ---------------- New ----------------
+document.getElementById("btn_new").onclick = async () => {
+  await generateID();
+  document.getElementById("student_id").value = "";
+  document.getElementById("student_name").value = "";
+  document.getElementById("paid_amount").value = "";
+  document.getElementById("total_amount").value = "";
+  document.getElementById("balance_amount").value = "";
+  document.getElementById("due_date").value = "";
+  document.getElementById("payment_date").value = "";
+};
+
+
+// ---------------- On Page Load ----------------
+window.onload = async () => {
+  await generateID();
+};
+
+</script>
+</body>
+</html>
+
+ 

@@ -1,0 +1,420 @@
+from flask import Flask, render_template, request, redirect, url_for, session, jsonify
+from datetime import datetime
+import pyodbc
+
+app = Flask(__name__)
+app.secret_key = "your_secret_key"
+
+# -----------------------------------------------------------------
+# MODIFY HERE → Database details (DSN, username, password)
+# -----------------------------------------------------------------
+DB_DSN = "YOUR_DSN_NAME"
+DB_USER = "system"
+DB_PASSWORD = "system123"
+# -----------------------------------------------------------------
+
+def get_db_connection():
+    return pyodbc.connect(f"DSN={DB_DSN};UID={DB_USER};PWD={DB_PASSWORD}")
+
+
+# ---------------------- LOGIN PAGE -------------------------------
+@app.route('/', methods=['GET','POST'])
+def login():
+    if request.method == 'POST':
+        uid = request.form.get("userid")
+        pwd = request.form.get("password")
+
+        # MODIFY HERE → your login table name
+        # Example TABLE: APP_USERS(USER_ID, PASSWORD)
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT PASSWORD FROM APP_USERS WHERE USER_ID=?", (uid,))
+        row = cur.fetchone()
+        conn.close()
+
+        if row and row[0] == pwd:
+            session['user'] = uid
+            return redirect(url_for("form_page"))
+        else:
+            return render_template("login.html", error="Invalid Username/Password")
+
+    return render_template("login.html")
+
+
+# ---------------------- MAIN FORM PAGE ---------------------------
+@app.route('/form')
+def form_page():
+    if 'user' not in session:
+        return redirect(url_for("login"))
+    return render_template("booking.html")   # MODIFY HERE (your HTML file name)
+
+
+# ---------------------- AUTO ID GENERATOR ------------------------
+@app.route('/generate_id')
+def generate_id():
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        # MODIFY HERE → your sequence name
+        cur.execute("SELECT SEQ_RECORD_ID.NEXTVAL FROM DUAL")
+        rec_id = cur.fetchone()[0]
+        conn.close()
+
+        return jsonify({'record_id': int(rec_id)})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+# ---------------------- INSERT / UPDATE BUFFER -------------------
+@app.route('/save_to_buffer', methods=['POST'])
+def save_to_buffer():
+
+    data = request.get_json()
+
+    # Helper to fetch values safely
+    def g(k): return data.get(k)
+
+    # MODIFY HERE → replace with your primary field
+    record_id = g("record_id")
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    # MODIFY HERE → YOUR MAIN TABLE NAME
+    cur.execute("SELECT 1 FROM MAIN_TABLE WHERE RECORD_ID=?", (record_id,))
+    if cur.fetchone():
+        return jsonify({'error': 'Record already committed!'}), 400
+
+    # -----------------------------------------------------------------
+    # MODIFY HERE → FETCH YOUR FIELDS (Example shown)
+    # -----------------------------------------------------------------
+    field1 = g("field1")  # e.g., customer_name
+    field2 = g("field2")  # e.g., item_type
+    field3 = g("field3")  # e.g., quantity
+    field4 = g("field4")  # e.g., price
+    field5 = g("field5")
+
+    # Add your calculation logic here:
+    total = float(field3) * float(field4)
+    # -----------------------------------------------------------------
+
+    # Check if record exists in buffer
+    cur.execute("SELECT 1 FROM BUFFER_TABLE WHERE RECORD_ID=?", (record_id,))
+    exists = cur.fetchone()
+
+    if exists:
+        # MODIFY HERE → UPDATE QUERY ACCORDING TO YOUR COLUMNS
+        cur.execute("""
+            UPDATE BUFFER_TABLE SET
+                FIELD1=?, FIELD2=?, FIELD3=?, FIELD4=?, FIELD5=?, TOTAL=?
+            WHERE RECORD_ID=?
+        """, (field1, field2, field3, field4, field5, total, record_id))
+        msg = "Record Updated Successfully"
+    else:
+        # MODIFY HERE → INSERT QUERY ACCORDING TO YOUR COLUMNS
+        cur.execute("""
+            INSERT INTO BUFFER_TABLE
+            (RECORD_ID, FIELD1, FIELD2, FIELD3, FIELD4, FIELD5, TOTAL)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (record_id, field1, field2, field3, field4, field5, total))
+        msg = "Record Inserted Successfully"
+
+    conn.commit()
+    conn.close()
+    return jsonify({'message': msg})
+
+
+
+# ---------------------- PREVIOUS RECORD --------------------------
+@app.route('/previous')
+def previous():
+    curr = int(request.args.get("id"))
+
+    # MODIFY HERE → your buffer table
+    sql = """
+        SELECT * FROM (
+            SELECT * FROM BUFFER_TABLE
+            WHERE RECORD_ID < ?
+            ORDER BY RECORD_ID DESC
+        ) WHERE ROWNUM=1
+    """
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute(sql, (curr,))
+    row = cur.fetchone()
+    conn.close()
+
+    if not row:
+        return jsonify({'error':'No previous record'})
+    
+    # MODIFY HERE → return your fields
+    return jsonify({'record': {
+        'record_id': row[0],
+        'field1': row[1],
+        'field2': row[2],
+        'field3': row[3],
+        'field4': row[4],
+        'field5': row[5],
+        'total': row[6]
+    }})
+
+
+
+# ---------------------- NEXT RECORD ------------------------------
+@app.route('/next')
+def next():
+    curr = int(request.args.get("id"))
+
+    sql = """
+        SELECT * FROM (
+            SELECT * FROM BUFFER_TABLE
+            WHERE RECORD_ID > ?
+            ORDER BY RECORD_ID ASC
+        ) WHERE ROWNUM=1
+    """
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute(sql, (curr,))
+    row = cur.fetchone()
+    conn.close()
+
+    if not row:
+        return jsonify({'error': 'No next record'})
+
+    return jsonify({'record': {
+        'record_id': row[0],
+        'field1': row[1],
+        'field2': row[2],
+        'field3': row[3],
+        'field4': row[4],
+        'field5': row[5],
+        'total': row[6]
+    }})
+
+
+
+# ---------------------- DELETE -----------------------------------
+@app.route('/delete', methods=['DELETE'])
+def delete():
+    data = request.get_json()
+    rid = data.get('record_id')
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    # MODIFY HERE → your tables
+    cur.execute("DELETE FROM BUFFER_TABLE WHERE RECORD_ID=?", (rid,))
+    cur.execute("DELETE FROM MAIN_TABLE WHERE RECORD_ID=?", (rid,))
+
+    conn.commit()
+    conn.close()
+
+    return jsonify({'message':"Deleted"})
+
+
+# ---------------------- COMMIT ALL -------------------------------
+@app.route('/commit_all', methods=['POST'])
+def commit_all():
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    # MODIFY HERE → table names
+    cur.execute("INSERT INTO MAIN_TABLE SELECT * FROM BUFFER_TABLE")
+    cur.execute("DELETE FROM BUFFER_TABLE")
+
+    conn.commit()
+    conn.close()
+
+    return jsonify({'message': 'Committed Successfully'})
+
+
+if __name__ == "__main__":
+    app.run(debug=True)
+
+
+
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Universal ODBC Form</title>
+
+  <style>
+  /* Styling same as earlier */
+  </style>
+</head>
+<body>
+
+<div class="card">
+
+  <h2>🔥 MODIFY HERE → YOUR PROJECT TITLE 🔥</h2>
+
+  <!-- Primary ID -->
+  <div class="row">
+    <label>Record ID</label>
+    <input type="number" id="record_id" readonly>
+  </div>
+
+  <!-- MODIFY HERE → ADD INPUT FIELDS ACCORDING TO DOMAIN -->
+  <div class="row">
+    <label>Field 1</label>
+    <input type="text" id="field1">
+  </div>
+
+  <div class="row">
+    <label>Field 2</label>
+    <input type="text" id="field2">
+  </div>
+
+  <div class="row">
+    <label>Field 3 (number)</label>
+    <input type="number" id="field3">
+  </div>
+
+  <div class="row">
+    <label>Field 4 (Price)</label>
+    <input type="number" id="field4">
+  </div>
+
+  <div class="row">
+    <label>Field 5</label>
+    <input type="text" id="field5">
+  </div>
+
+  <div class="row">
+    <label>Total</label>
+    <input type="number" id="total" readonly>
+  </div>
+
+  <div class="btns">
+    <button onclick="newRecord()">New</button>
+    <button onclick="insert()">Insert</button>
+    <button onclick="save()">Save</button>
+    <button onclick="prev()">Prev</button>
+    <button onclick="next()">Next</button>
+    <button onclick="del()">Delete</button>
+    <button onclick="commitAll()">Commit</button>
+  </div>
+</div>
+
+
+<script>
+
+// MODIFY HERE → calculation logic for amount
+function calculate() {
+  const a = Number(document.getElementById('field3').value);
+  const b = Number(document.getElementById('field4').value);
+  document.getElementById('total').value = a * b;
+}
+
+// Auto ID
+async function generateID() {
+  let r = await fetch("/generate_id");
+  let d = await r.json();
+  document.getElementById('record_id').value = d.record_id;
+}
+
+// Gather data
+function dataObj() {
+  return {
+    record_id: document.getElementById("record_id").value,
+    field1: document.getElementById("field1").value,
+    field2: document.getElementById("field2").value,
+    field3: document.getElementById("field3").value,
+    field4: document.getElementById("field4").value,
+    field5: document.getElementById("field5").value
+  }
+}
+
+async function insert() {
+  let r = await fetch("/save_to_buffer", {
+    method:"POST",
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(dataObj())
+  });
+  alert((await r.json()).message);
+}
+
+async function save() { insert(); }
+
+async function prev() {
+  let id = document.getElementById("record_id").value;
+  const r = await fetch(`/previous?id=${id}`);
+  const d = await r.json();
+  if (!d.record) return alert(d.error);
+
+  load(d.record);
+}
+
+async function next() {
+  let id = document.getElementById("record_id").value;
+  const r = await fetch(`/next?id=${id}`);
+  const d = await r.json();
+  if (!d.record) return alert(d.error);
+
+  load(d.record);
+}
+
+function load(r) {
+  document.getElementById("record_id").value = r.record_id;
+  document.getElementById("field1").value = r.field1;
+  document.getElementById("field2").value = r.field2;
+  document.getElementById("field3").value = r.field3;
+  document.getElementById("field4").value = r.field4;
+  document.getElementById("field5").value = r.field5;
+  document.getElementById("total").value = r.total;
+}
+
+async function del() {
+  let id = document.getElementById("record_id").value;
+  let r = await fetch("/delete", {
+    method:"DELETE",
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({record_id:id})
+  });
+  alert((await r.json()).message);
+}
+
+async function commitAll() {
+  let r = await fetch("/commit_all", {method:"POST"});
+  alert((await r.json()).message);
+}
+
+async function newRecord() {
+  await generateID();
+  document.querySelectorAll("input").forEach(i=>{if(i.id!='record_id'){i.value=''}})
+}
+
+window.onload = generateID;
+
+</script>
+
+</body>
+</html>
+
+
+
+-----------------------------------------------------------------
+-- MODIFY HERE → Your domain main table
+-----------------------------------------------------------------
+CREATE TABLE BUFFER_TABLE (
+    RECORD_ID NUMBER PRIMARY KEY,                  -- Auto ID
+    FIELD1 VARCHAR2(50),                           -- MODIFY
+    FIELD2 VARCHAR2(50),                           -- MODIFY
+    FIELD3 NUMBER CHECK (FIELD3 >= 0),             -- MODIFY
+    FIELD4 NUMBER CHECK (FIELD4 >= 0),             -- MODIFY
+    FIELD5 VARCHAR2(50),                           -- MODIFY
+    TOTAL NUMBER,                                  -- Auto calc
+    CREATED_DATE DATE DEFAULT SYSDATE
+);
+
+
+CREATE TABLE MAIN_TABLE AS SELECT * FROM BUFFER_TABLE WHERE 1=0;
+
+CREATE SEQUENCE SEQ_RECORD_ID START WITH 1000 INCREMENT BY 1;
+
+
+
+
